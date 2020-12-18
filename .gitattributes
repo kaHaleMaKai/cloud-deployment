@@ -1,0 +1,5 @@
+/secrets/*                       filter=git-crypt  diff=git-crypt
+/secrets/**/*                    filter=git-crypt  diff=git-crypt
+/playbooks/*/files/secrets/*     filter=git-crypt  diff=git-crypt
+/playbooks/*/files/secrets/**/*  filter=git-crypt  diff=git-crypt
+secrets.yml                      filter=git-crypt  diff=git-crypt
