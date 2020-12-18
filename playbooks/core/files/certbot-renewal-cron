@@ -1,0 +1,5 @@
+MAILTO=lars.winderling@posteo.de
+
+17 3 * * *  { date; /usr/local/sbin/certbot -n renew; } >> /var/log/letsencrypt/renewal-cron 2>&1
+
+# vim: ft=crontab

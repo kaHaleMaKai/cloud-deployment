@@ -1,0 +1,216 @@
+---
+- hosts: nextcloud
+  tasks:
+    - name: install nginx
+      apt:
+        name: nginx
+        state: present
+    - name: copy password file for basic auth
+      copy:
+        src: nextcloud-auth
+        dest: /etc/nginx/nextcloud-auth
+        owner: root
+        group: www-data
+        mode: 0640
+    - name: copy nginx.conf
+      copy:
+        src: nginx.conf
+        dest: /etc/nginx/nginx.conf
+      notify: restart nginx
+    - name: template .my.cnf
+      template:
+        src: dot.my.cnf.j2
+        dest: ~/.my.cnf
+        mode: 0600
+    - name: create mysql conf dir
+      file:
+        path: /etc/mysql
+        state: directory
+        mode: 0755
+    - name: template mysql config
+      template:
+        src: mysql.config.j2
+        dest: /etc/mysql/my.cnf
+    - name: install packages
+      apt:
+        name: "{{ nextcloud_packages }}"
+        state: present
+    - name: start and enable mysql
+      systemd:
+        name: mysql
+        enabled: yes
+        state: started
+    - name: add mysql root user
+      block:
+        - name: use .my.cnf file
+          mysql_user:
+            name: "root"
+            password: "{{ mysql_root_pw }}"
+            host: localhost
+            login_unix_socket: /var/run/mysqld/mysqld.sock
+          no_log: yes
+      rescue:
+        - name: don't use .my.cnf file
+          mysql_user:
+            name: "root"
+            password: "{{ mysql_root_pw }}"
+            host: localhost
+            login_password: ''
+            login_user: root
+            login_unix_socket: /var/run/mysqld/mysqld.sock
+          no_log: yes
+    - name: create mysql db
+      mysql_db:
+        name: "{{ wordpress_db_schema }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+    - name: add mysql user
+      mysql_user:
+        name: "{{ wordpress_db_user }}"
+        password: "{{ wordpress_db_pass }}"
+        priv: "{{ wordpress_db_schema }}.*:ALL"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+    - name: template nginx nextcloud conf
+      tags: nginx-conf
+      template:
+        src: nextcloud-nginx.conf.j2
+        dest: /etc/nginx/sites-available/nextcloud
+      notify: reload nginx
+    - name: enable the site
+      tags: nginx-conf
+      file:
+        src: /etc/nginx/sites-available/nextcloud
+        dest: /etc/nginx/sites-enabled/nextcloud
+        state: link
+    - name: remove default site
+      tags: nginx-conf
+      file:
+        path: "/etc/nginx/sites-{{ item }}/default"
+        state: absent
+      notify: reload nginx
+      loop: [enabled, available]
+    - name: tune php fpm pooling
+      tags: php-tuning
+      lineinfile:
+        path: /etc/php/7.3/fpm/pool.d/www.conf
+        regexp: '^{{ item.key }}\s*=\s*'
+        line: '{{ item.key }} = {{ item.value }}'
+      loop: "{{ attrs|dict2items }}"
+      vars:
+        attrs:
+          pm: dynamic
+          pm.max_children: 40 # 120
+          pm.start_servers: 4 # 12
+          pm.min_spare_servers: 2 # 6
+          pm.max_spare_servers: 6 # 18
+          "php_admin_value[session.save_path]": "{{ nextcloud_domain }}/sessions"
+          "env[HOSTNAME]": "$HOSTNAME"
+          "env[PATH]": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          "env[TMP]":  "/tmp"
+          "env[TMPDIR]": "/tmp"
+          "env[TEMP]": "/tmp"
+      notify: restart nginx
+    - name: tune php opcache
+      lineinfile:
+        path: /etc/php/7.3/fpm/php.ini
+        regexp: '^opcache\.{{ item.key }}\s*=\s*'
+        line: 'opcache.{{ item.key }} = {{ item.value }}'
+      loop: "{{ attrs|dict2items }}"
+      vars:
+        attrs:
+          enable: 1
+          interned_strings_buffer: 8
+          max_accelerated_files: 10000
+          memory_consumption: 128
+          save_comments: 1
+          revalidate_freq: 1
+      notify: restart nginx
+    - name: download nextcloud tarball and unarchive
+      unarchive:
+        src: "https://download.nextcloud.com/server/releases/nextcloud-20.0.3.tar.bz2"
+        dest: "{{ nextcloud_root | dirname }}"
+        remote_src: yes
+        creates: "{{ nextcloud_root }}"
+        owner: www-data
+        group: www-data
+    - name: rename unpacked tarball to dir name
+      command:
+        argv:
+          - mv
+          - "{{ nextcloud_root | dirname }}/nextcloud"
+          - "{{ nextcloud_root }}"
+        creates: "{{ nextcloud_root }}"
+    - name: add nextcloud db in mysql
+      tags: config
+      mysql_db:
+        name: "{{ nextcloud_db_schema }}"
+        state: present
+        encoding: utf8
+        collation: utf8_general_ci
+        login_unix_socket: /run/mysqld/mysqld.sock
+    - name: add nextcloud mysql user
+      tags: config
+      mysql_user:
+        name: "{{ nextcloud_db_user }}"
+        state: present
+        priv: "`{{ nextcloud_db_schema }}`.*:ALL"
+        password: "{{ nextcloud_db_pass }}"
+        encrypted: no
+        login_unix_socket: /run/mysqld/mysqld.sock
+    - name: create ansible tmp dir for www-data
+      tags: config
+      file:
+        path: /var/www/.ansible/tmp
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: 0700
+    - name: run nextcloud installer
+      tags: config
+      command:
+        argv:
+           - php
+           - occ
+           - maintenance:install
+           - --no-interaction
+           - --database
+           - mysql
+           - --database-name
+           - "{{ nextcloud_db_schema|quote }}"
+           -  --database-user
+           - "{{ nextcloud_db_user|quote }}"
+           - --database-pass
+           - "{{ nextcloud_db_pass|quote}}"
+           - --admin-user
+           - "{{ nextcloud_admin_user|quote }}"
+           - --admin-pass
+           - "{{ nextcloud_admin_pass|quote }}"
+           - --data-dir
+           - "{{ nextcloud_datadir|default(nextcloud_root ~ '/data') }}"
+        chdir: "{{ nextcloud_root }}"
+        creates: "{{ nextcloud_root }}/config/config.php"
+      become: yes
+      become_user: www-data
+    - name: trust web host
+      tags: trust
+      replace:
+        path: "{{ nextcloud_root }}/config/config.php"
+        regexp: "0 => 'localhost', *(?=\\n *\\))"
+        replace: "    0 => 'localhost', 1 => '{{ nextcloud_domain }}'"
+    - name: use objectstore as primary storage if requested
+      tags: objectstore
+      replace:
+        path: "{{ nextcloud_root }}/config/config.php"
+        regexp: "^ *'datadirectory' => [^\n]*"
+        replace: "{{ lookup('template', 'objectstore.php.j2') }}"
+      when: nextcloud_bucket_name|default(false)
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded

@@ -1,0 +1,9 @@
+---
+certbot_domains:
+  - cloud.winderling.net
+
+certbot_mail_address: lars.winderling@posteo.de
+ansible_python_interpreter: /usr/bin/python3
+
+nextcloud_domain: cloud.winderling.net
+nextcloud_root: /var/www/cloud.winderling.net

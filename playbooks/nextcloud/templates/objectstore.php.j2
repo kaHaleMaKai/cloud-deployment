@@ -1,0 +1,15 @@
+  'objectstore' =>
+  [
+    'class' => '\\\\OC\\\\Files\\\\ObjectStore\\\\S3',
+    'arguments' =>
+    [
+      'bucket' => '{{ nextcloud_bucket_name }}',
+      'autocreate' => true,
+      'key' => '{{ nextcloud_bucket_key }}',
+      'secret' => '{{ nextcloud_bucket_secret }}',
+      'hostname' => '{{ nextcloud_bucket_host }}',
+      'use_ssl' => true,
+      'region' => '{{ nextcloud_bucket_region }}',
+      'use_path_style' => false,
+      ],
+  ],

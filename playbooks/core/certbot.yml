@@ -1,0 +1,69 @@
+---
+- name: deinstall system-wide certbot
+  apt:
+    name: certbot
+    state: absent
+
+- name: install certbot and dns hetzer plugin
+  pip:
+    name:
+      - "certbot==1.10.1"
+      - "certbot-dns-hetzner==1.0.5"
+    virtualenv_python: python3
+    virtualenv: /opt/certbot
+
+- name: add global link for certbot
+  file:
+    src: /opt/certbot/bin/certbot
+    dest: /usr/local/bin/certbot
+    state: link
+
+- name: create hetzner config dir
+  file:
+    path: /etc/hetzner
+    state: directory
+    mode: 0700
+
+- name: store hetzner api token
+  template:
+    src: hetzner-dns-api-token.j2
+    dest: /etc/hetzner/dns-api-token
+    mode: 0600
+
+- name: run certbot initially
+  command:
+    argv:
+      - "certbot"
+      - "certonly"
+      - "--agree-tos"
+      - "--email"
+      - "{{ certbot_mail_address|quote }}"
+      - "--non-interactive"
+      - "--authenticator"
+      - "dns-hetzner"
+      - "--dns-hetzner-credentials"
+      - "/etc/hetzner/dns-api-token"
+      - "-d"
+      - "{{ item | quote }}"
+  register: certbot_msg
+  loop: "{{ certbot_domains }}"
+  changed_when: '"certificate and chain have been saved" in certbot_msg|to_yaml'
+
+- name: print certbot msg
+  debug:
+    msg: "{{ certbot_msg }}"
+  when: certbot_msg.changed
+
+- name: renew certs
+  command:
+    argv:
+      - "certbot"
+      - "-n"
+      - "renew"
+  register: renewal
+  changed_when: '"No renewals were attempted." not in renewal.stdout'
+
+- name: install cert renewal cron
+  copy:
+    src: certbot-renewal-cron
+    dest: /etc/cron.d/certbot-renewal

@@ -1,0 +1,59 @@
+---
+
+- hosts: all
+  roles:
+    - role: ssh-server-config
+      tags: ssh-server
+  tasks:
+    - name: install packages for shorewall rule management
+      tags: shorewall
+      apt:
+        name: shorewall
+        state: present
+    - name: setup shorewall config
+      tags: shorewall
+      copy:
+        src: "{{ playbook_dir }}/files/shorewall/{{ ansible_fqdn }}/{{ item }}"
+        dest: "/etc/shorewall/{{ item }}"
+      notify: restart shorewall
+      loop: [interfaces, policy, rules, zones]
+    - name: install some basic packages
+      tags: basic-packages
+      apt:
+        name: "{{ core_packages }}"
+        state: present
+    - name: copy fail2ban custom filters
+      tags: fail2ban
+      copy:
+        src: "fail2ban/{{ item }}.conf"
+        dest: "/etc/fail2ban/filter.d/{{ item }}.local"
+      notify: restart fail2ban
+      loop:
+        - nginx-http-auth
+        - nginx-nohome
+        - nginx-noproxy
+    - name: copy fail2ban config file
+      tags: fail2ban
+      copy:
+        src: fail2ban/jail.local
+        dest: /etc/fail2ban/jail.local
+      notify: restart fail2ban
+    - name: run certbot
+      tags: certbot
+      include_tasks:
+        file: certbot.yml
+        apply:
+          tags: certbot
+  handlers:
+    - name: restart shorewall
+      systemd:
+        name: shorewall
+        state: restarted
+        daemon_reload: yes
+        enabled: yes
+    - name: restart fail2ban
+      systemd:
+        name: fail2ban
+        state: restarted
+        daemon_reload: yes
+        enabled: yes
