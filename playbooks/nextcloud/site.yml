@@ -203,6 +203,18 @@
         regexp: "^ *'datadirectory' => [^\n]*"
         replace: "{{ lookup('template', 'objectstore.php.j2') }}"
       when: nextcloud_bucket_name|default(false)
+    - name: add fail2ban filter
+      tags: fail2ban
+      copy:
+        src: fail2ban-filter.conf
+        dest: /etc/fail2ban/filter.d/nextcloud.local
+      notify: restart fail2ban
+    - name: add fail2ban jail
+      tags: fail2ban
+      template:
+        src: fail2ban-jail.conf.j2
+        dest: /etc/fail2ban/jail.d/nextcloud.local
+      notify: restart fail2ban
   handlers:
     - name: restart nginx
       systemd:
@@ -214,3 +226,7 @@
       systemd:
         name: nginx
         state: reloaded
+    - name: restart fail2ban
+      systemd:
+        name: fail2ban
+        state: restarted
